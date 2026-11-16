@@ -76,10 +76,48 @@ fd=s=>P(s).toLocaleDateString('en-IN',{day:'numeric',month:'short'}),
 sh=n=>n>=1e3?(n/1e3).toFixed(n>=1e4?0:1).replace('.0','')+'k':Math.round(n),
 plus=n=>iso(new Date(Date.now()+n*864e5));
 
-const toast=(m)=>{const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('on'),2600)};
+const toast=(m)=>{const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('on'),2800)};
 
 const def=()=>({cur:'INR',salary:0,payday:1,start:TD(),ex:[],goals:[],cats:[['Rent','🏠','need'],['Food','🍜','need'],['Transport','🚌','need'],['Bills','💡','need'],['Health','💊','need'],['Subscriptions','📺','want'],['Shopping','🛍️','want'],['Fun','🎉','want']].map(([name,emoji,kind],i)=>({id:'c'+i,name,emoji,kind,bud:0}))});
 let S=def(), SQL=null, db=null, dirty=false;
+
+/* ---- Auto-detect GitHub Pages owner & repo from URL ---- */
+function detectRepo(){
+  const h=location.hostname, p=location.pathname.split('/').filter(Boolean);
+  if(h.endsWith('.github.io')){
+    const owner=h.replace('.github.io','');
+    const repo=p[0]&&!p[0].includes('.')?p[0]:`${owner}.github.io`;
+    return{owner,repo};
+  }
+  return{owner:'',repo:''};
+}
+
+const getGhCfg=()=>{
+  const det=detectRepo();
+  const base={owner:det.owner,repo:det.repo,branch:'main',path:'penny.sqlite',token:''};
+  try{
+    const saved=JSON.parse(localStorage.getItem(GH_KEY));
+    if(saved)return{...base,...saved,owner:saved.owner||det.owner,repo:saved.repo||det.repo};
+  }catch(e){}
+  return base;
+};
+const saveGhCfg=c=>localStorage.setItem(GH_KEY,JSON.stringify(c));
+
+/* ---- One-Click Magic Sync Link Handler (#sync=...) ---- */
+function checkMagicLink(){
+  if(location.hash.startsWith('#sync=')){
+    try{
+      const payload=JSON.parse(atob(decodeURIComponent(location.hash.slice(6))));
+      if(payload&&payload.token){
+        saveGhCfg({...getGhCfg(),...payload});
+        history.replaceState(null,'',location.pathname+location.search);
+        toast('✓ Device linked! Loading SQLite…');
+        return true;
+      }
+    }catch(e){console.warn('Invalid sync link',e)}
+  }
+  return false;
+}
 
 /* ---- IndexedDB binary cache for SQLite ---- */
 const idb={
@@ -131,9 +169,6 @@ function stateToDb(database,state){
   database.run("COMMIT");
 }
 
-const getGhCfg=()=>{try{return JSON.parse(localStorage.getItem(GH_KEY))||{owner:'',repo:'',branch:'main',path:'penny.sqlite',token:''}}catch(e){return{owner:'',repo:'',branch:'main',path:'penny.sqlite',token:''}}};
-const saveGhCfg=c=>localStorage.setItem(GH_KEY,JSON.stringify(c));
-
 const u8ToB64=u8=>{let b='';for(let i=0;i<u8.length;i+=0x8000)b+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000));return btoa(b)};
 const b64ToU8=b64=>{const bin=atob(b64.replace(/\s/g,''));const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return u8};
 
@@ -147,7 +182,6 @@ async function pullFromGitHub(silent=false){
       const r=await fetch(url,{headers:{Authorization:`Bearer ${cfg.token}`,Accept:'application/vnd.github+json'}});
       if(r.ok){const j=await r.json();if(j.content)u8=b64ToU8(j.content)}
     }else{
-      // Fallback: try fetching static penny.sqlite relative to GitHub Pages URL
       const r=await fetch(`./${filePath}?t=${Date.now()}`);
       if(r.ok){const buf=await r.arrayBuffer();if(buf.byteLength>16)u8=new Uint8Array(buf)}
     }
@@ -156,7 +190,7 @@ async function pullFromGitHub(silent=false){
       S=dbToState(db);
       await idb.set('penny.sqlite',u8);
       dirty=false;
-      if(!silent)toast('Loaded latest penny.sqlite from GitHub');
+      if(!silent)toast('✓ Synced latest penny.sqlite');
       return true;
     }
   }catch(e){console.warn('GitHub pull skipped:',e)}
@@ -166,11 +200,11 @@ async function pullFromGitHub(silent=false){
 async function pushToGitHub(){
   const cfg=getGhCfg();
   if(!cfg.owner||!cfg.repo||!cfg.token){
-    toast('Configure GitHub Sync in ⚙️ Settings first');
+    toast('Paste your GitHub token in ⚙️ Settings first');
     ss();
     return;
   }
-  toast('Saving penny.sqlite to GitHub…');
+  toast('Updating penny.sqlite on GitHub…');
   try{
     stateToDb(db,S);
     const u8=db.export();
@@ -199,9 +233,9 @@ async function pushToGitHub(){
     }
     dirty=false;
     render();
-    toast('✓ Saved to GitHub SQLite!');
+    toast('✓ SQLite updated on GitHub!');
   }catch(e){
-    toast('GitHub save failed: '+e.message);
+    toast('Sync failed: '+e.message);
   }
 }
 
@@ -278,7 +312,7 @@ return `<div class="card"><h3>Month-end forecast</h3><p>At your current pace you
 <div class="card"><h3>Spending by type</h3>${S.cats.filter(k=>st.by[k.id]||k.bud).map(k=>{const v=st.by[k.id]||0,r=k.bud?v/k.bud:v/mx;return B(k.emoji+' '+esc(k.name),fmt(v)+(k.bud?' of '+fmt(k.bud):''),r*100,k.bud&&r>1?'var(--bad)':k.bud&&r>.8?'var(--warn)':'')}).join('')||'<p class="mu">Add expenses to see where the money goes.</p>'}<small>Set a monthly budget for each type in Settings.</small></div>
 <div class="card"><h3>Ways to save more</h3>${tips(c).map(t=>`<p style="margin-bottom:10px">💡 ${t}</p>`).join('')}</div>`}
 const views={home,cal,ent,goals,ins};
-function render(){$('#app').innerHTML=`<div class="top"><div><h1>🪙 Penny</h1><small>${new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}</small></div><div class="row"><button class="ib" data-a="sync" aria-label="Save SQLite to GitHub" title="Save SQLite to GitHub">☁️${dirty?'<i class="dot"></i>':''}</button><button class="ib" data-a="set" aria-label="Settings">⚙️</button></div></div>`+views[ui.tab]();
+function render(){$('#app').innerHTML=`<div class="top"><div><h1>🪙 Penny</h1><small>${new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}</small></div><div class="row"><button class="ib" data-a="sync" aria-label="Save SQLite to GitHub" title="One-click save SQLite to GitHub">☁️${dirty?'<i class="dot"></i>':''}</button><button class="ib" data-a="set" aria-label="Settings">⚙️</button></div></div>`+views[ui.tab]();
 $('#nav').innerHTML=[['home','🏠','Home'],['cal','📅','Calendar'],['ent','🧾','Entries'],['goals','🎯','Goals'],['ins','💡','Insights']].map(([k,i,l])=>`<button data-a="tab" data-v="${k}" class="${ui.tab==k?'on':''}"><b>${i}</b>${l}</button>`).join('')}
 
 /* ---- sheets ---- */
@@ -300,11 +334,12 @@ openS(`<h2>${id?'Edit goal':'New goal'}</h2><form data-f="g" data-id="${id||''}"
 <div class="row"><button class="btn p" style="flex:1">Save goal</button>${id?`<button type="button" class="btn d" data-a="dg" data-v="${id}">Delete</button>`:''}</div></form>`)}
 const sc=id=>openS(`<h2>Add savings to ${esc(S.goals.find(g=>g.id==id).name)}</h2><form data-f="sv" data-id="${id}"><input class="amt" name="amt" type="number" step="any" min="0" placeholder="0" required><button class="btn p" style="width:100%">Add savings</button></form>`);
 function ss(){const gh=getGhCfg();openS(`<h2>Settings</h2><form data-f="set"><small>Monthly salary</small><input name="salary" type="number" min="0" step="any" value="${S.salary||''}" placeholder="e.g. 45000" required><small>Payday (day of month)</small><input name="payday" type="number" min="1" max="31" value="${S.payday}"><small>Currency</small><select name="cur">${['INR','USD','EUR','GBP','AED','SAR'].map(c=>`<option ${c==S.cur?'selected':''}>${c}</option>`).join('')}</select><button class="btn p" style="width:100%">Save settings</button></form>
-<h3 style="margin-top:20px">GitHub SQLite Sync (Cross-Device)</h3><small>Connect your GitHub repository so tapping ☁️ updates <b>penny.sqlite</b> across all your devices.</small>
+<h3 style="margin-top:20px">GitHub SQLite Sync (One-Click Across Devices)</h3><small>Username &amp; repo are auto-detected. Paste your GitHub token once, then use <b>Copy Magic Sync Link</b> to pair any other phone or PC in one tap.</small>
 <form data-f="gh" style="margin-top:8px"><div class="row"><input name="owner" placeholder="GitHub username" value="${esc(gh.owner)}"><input name="repo" placeholder="Repo name" value="${esc(gh.repo)}"></div>
 <div class="row"><input name="branch" placeholder="Branch (main)" value="${esc(gh.branch)}"><input name="path" placeholder="File (penny.sqlite)" value="${esc(gh.path)}"></div>
-<input name="token" type="password" placeholder="GitHub Personal Access Token (repo scope)" value="${esc(gh.token)}">
-<div class="row"><button class="btn p" style="flex:1">Save GitHub config</button><button type="button" class="btn" data-a="pull">Pull latest</button></div></form>
+<input name="token" type="password" placeholder="GitHub Personal Access Token" value="${esc(gh.token)}">
+<div class="row" style="margin-bottom:8px"><button class="btn p" style="flex:1">Save &amp; Sync</button><button type="button" class="btn" data-a="pull">Pull latest</button></div>
+<button type="button" class="btn" style="width:100%" data-a="mlink">🔗 Copy Magic Sync Link for other devices</button></form>
 <h3 style="margin-top:20px">Monthly bills and fixed expenses</h3><small>Rent, EMI, internet, subscriptions: anything you pay every month. Penny takes them off your income before working out your daily budget.</small><div id="bl" style="margin-top:6px">${bl()}</div>
 <div class="nc"><div class="row"><input id="bn" placeholder="Bill name, e.g. Rent"><input id="ba" inputmode="decimal" placeholder="Amount, or 800+400+250"></div><div class="row"><select id="bc">${S.cats.map(c=>`<option value="${c.id}">${c.emoji} ${esc(c.name)}</option>`).join('')}</select><input id="bd" type="number" min="1" max="31" placeholder="Pay day"><button type="button" class="btn p" data-a="addbill">Add bill</button></div><small id="bt" class="ok"></small></div>
 <h3 style="margin-top:20px">Expense types</h3><small>The limit beside each type only warns you when you go over it. It is not counted as spending, so put bills in the list above.</small><div id="cl">${cl()}</div>${ncat()}
@@ -317,6 +352,7 @@ if($('#chips')){$('#chips').innerHTML=chips(c.id);$('#ncat').hidden=true}if($('#
 const A={tab:v=>{ui.tab=v;render();scrollTo(0,0)},
 sync:()=>pushToGitHub(),
 pull:async()=>{const ok=await pullFromGitHub(false);if(ok){closeS();render()}else toast('Could not load penny.sqlite from GitHub')},
+mlink:()=>{const cfg=getGhCfg();if(!cfg.token){toast('Save your GitHub token first');return}const url=`${location.origin}${location.pathname}#sync=${encodeURIComponent(btoa(JSON.stringify(cfg)))}`;navigator.clipboard.writeText(url).then(()=>toast('✓ Magic Sync Link copied! Open it on any device.')).catch(()=>prompt('Copy this Magic Sync Link:',url))},
 expsql:()=>{if(!db)return;stateToDb(db,S);const blob=new Blob([db.export()],{type:'application/x-sqlite3'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='penny.sqlite';a.click()},
 mm:v=>{ui.m+=+v;if(ui.m<0){ui.m=11;ui.y--}if(ui.m>11){ui.m=0;ui.y++}const n=new Date();ui.sel=ui.y==n.getFullYear()&&ui.m==n.getMonth()?TD():iso(new Date(ui.y,ui.m,1));render()},
 day:v=>{ui.sel=v;render()},add:()=>sx(null,ui.tab=='cal'?ui.sel:TD()),edit:v=>sx(v),set:ss,close:closeS,ag:()=>sg(),eg:v=>sg(v),sv:v=>sc(v),
@@ -331,8 +367,8 @@ bk:()=>{const b=$('#bk');b.value=JSON.stringify(S);b.select();try{navigator.clip
 rs:()=>{const b=$('#bk');try{const d=JSON.parse(b.value);if(!d||!d.cats||!d.ex)throw 0;S=d;fin()}catch(e){b.value='';b.placeholder='That is not a valid Penny backup. Paste the full text you copied earlier.'}},
 reset:(v,b)=>{if(b.dataset.s){S=def();fin()}else{b.dataset.s=1;b.textContent='Tap again to erase'}}};
 document.addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b||(b.dataset.a=='close'&&e.target!==b))return;const f=A[b.dataset.a];f&&f(b.dataset.v,b)});
-document.addEventListener('submit',e=>{e.preventDefault();const f=e.target,d=Object.fromEntries(new FormData(f)),t=f.dataset.f,id=f.dataset.id;
-if(t=='gh'){saveGhCfg({owner:d.owner.trim(),repo:d.repo.trim(),branch:d.branch.trim()||'main',path:d.path.trim()||'penny.sqlite',token:d.token.trim()});toast('GitHub config saved');pullFromGitHub(false).then(ok=>{if(ok){closeS();render()}});return}
+document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target,d=Object.fromEntries(new FormData(f)),t=f.dataset.f,id=f.dataset.id;
+if(t=='gh'){saveGhCfg({owner:d.owner.trim(),repo:d.repo.trim(),branch:d.branch.trim()||'main',path:d.path.trim()||'penny.sqlite',token:d.token.trim()});const pulled=await pullFromGitHub(false);if(!pulled)await pushToGitHub();closeS();render();return}
 if(t=='ex'){const o={name:d.name.trim()||'Entry',amt:+d.amt,inc:+d.inc,cat:+d.inc?null:d.cat,date:d.date,rec:!!d.rec};id?Object.assign(S.ex.find(x=>x.id==id),o):S.ex.push({id:uid(),...o});if(d.date<S.start)S.start=d.date}
 if(t=='g'){const o={emoji:d.emoji||'🎯',name:d.name.trim(),target:+d.target,saved:+d.saved||0,due:d.due};id?Object.assign(S.goals.find(x=>x.id==id),o):S.goals.push({id:uid(),...o})}
 if(t=='sv')S.goals.find(x=>x.id==id).saved+=+d.amt;
@@ -355,8 +391,9 @@ $('#w'+w).textContent=x>0?(r?'ready '+new Date(Date.now()+Math.ceil(r/x)*864e5).
 
 /* ---- Boot SQLite Engine ---- */
 (async()=>{
+  const linked=checkMagicLink();
   SQL=await initSqlJs({locateFile:f=>`https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}`});
-  const pulled=await pullFromGitHub(true);
+  const pulled=await pullFromGitHub(!linked);
   if(!pulled){
     const cached=await idb.get('penny.sqlite').catch(()=>null);
     if(cached){
