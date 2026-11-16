@@ -3,6 +3,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Penny – daily savings planner</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=Figtree:wght@400;500;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
 <style>
 :root{--bg:#e9f0ea;--card:#fff;--ink:#12261f;--mute:#5f7a6f;--line:#d3e0d7;--hero:#0f4a38;--hi:#f7f3e3;--acc:#f2b01e;--ai:#201700;--lk:#0f6a4e;--ok:#12875a;--warn:#c77700;--bad:#cf3d2e;--d:'Bricolage Grotesque',system-ui,sans-serif;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b1713;--card:#12241d;--ink:#e6f1ea;--mute:#8aa598;--line:#223a30;--lk:#5fe0b0;--ok:#37c48a;--warn:#f0a63a;--bad:#ff7060;color-scheme:dark}}
@@ -27,7 +28,8 @@ small,.mu{color:var(--mute);font-size:12.5px}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
 .btn{border:1px solid var(--line);background:var(--card);border-radius:12px;padding:10px 14px;cursor:pointer;font-weight:700}
 .btn.p{background:var(--acc);color:var(--ai);border-color:var(--acc)}.btn.d{color:var(--bad)}
-.ib{border:0;background:none;cursor:pointer;font-size:20px}
+.ib{border:0;background:none;cursor:pointer;font-size:20px;position:relative}
+.ib .dot{position:absolute;top:0;right:-2px;width:8px;height:8px;border-radius:50%;background:var(--acc)}
 .lnk{border:0;background:none;color:var(--lk);font-weight:700;cursor:pointer;padding:0;text-decoration:underline}
 input,select,textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:11px 12px;margin:0 0 10px}
 input:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid var(--lk);outline-offset:2px}
@@ -54,14 +56,18 @@ nav button{flex:1;border:0;background:none;display:flex;flex-direction:column;al
 .kp{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0;text-align:center}.kp.q{grid-template-columns:repeat(2,1fr);text-align:left}.kp b{font:700 17px var(--d);display:block}
 .cols{display:flex;gap:6px;align-items:flex-end;height:96px}.cols div{flex:1;text-align:center;display:flex;flex-direction:column;justify-content:flex-end;height:100%}.cols i{display:block;border-radius:6px 6px 2px 2px;background:var(--lk);min-height:3px;margin-bottom:3px}
 .mn{margin-bottom:12px}.nc{background:var(--bg);border-radius:14px;padding:10px;margin-bottom:10px}.nc input,.nc select{margin-bottom:8px}
+#toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:var(--hero);color:var(--hi);padding:8px 16px;border-radius:99px;font-size:13px;font-weight:700;z-index:20;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.on{opacity:1}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style></head><body>
-<div id="app"></div>
+<div id="toast"></div>
+<div id="app"><div class="card" style="text-align:center;padding:40px">Loading SQLite database…</div></div>
 <button class="fab" data-a="add" aria-label="Add entry">+</button>
 <nav id="nav"></nav>
 <div id="sheet" data-a="close"></div>
 <script>
-const K='penny.v1',$=s=>document.querySelector(s),uid=()=>Math.random().toString(36).slice(2,8),
+const K='penny.v1',GH_KEY='penny.gh',IDB_NAME='PennySQLiteDB',
+$=s=>document.querySelector(s),uid=()=>Math.random().toString(36).slice(2,8),
 esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]),
 iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'),
 P=s=>{const[a,b,c]=s.split('-').map(Number);return new Date(a,b-1,c)},TD=()=>iso(new Date()),
@@ -69,9 +75,145 @@ dim=(y,m)=>new Date(y,m+1,0).getDate(),dd=(a,b)=>Math.round((P(b)-P(a))/864e5),
 fd=s=>P(s).toLocaleDateString('en-IN',{day:'numeric',month:'short'}),
 sh=n=>n>=1e3?(n/1e3).toFixed(n>=1e4?0:1).replace('.0','')+'k':Math.round(n),
 plus=n=>iso(new Date(Date.now()+n*864e5));
+
+const toast=(m)=>{const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('on'),2600)};
+
 const def=()=>({cur:'INR',salary:0,payday:1,start:TD(),ex:[],goals:[],cats:[['Rent','🏠','need'],['Food','🍜','need'],['Transport','🚌','need'],['Bills','💡','need'],['Health','💊','need'],['Subscriptions','📺','want'],['Shopping','🛍️','want'],['Fun','🎉','want']].map(([name,emoji,kind],i)=>({id:'c'+i,name,emoji,kind,bud:0}))});
-let S;try{S=JSON.parse(localStorage.getItem(K))}catch(e){}S=S&&S.cats?S:def();
-const save=()=>{try{localStorage.setItem(K,JSON.stringify(S))}catch(e){}};
+let S=def(), SQL=null, db=null, dirty=false;
+
+/* ---- IndexedDB binary cache for SQLite ---- */
+const idb={
+  open:()=>new Promise((res,rej)=>{const r=indexedDB.open(IDB_NAME,1);r.onupgradeneeded=()=>r.result.createObjectStore('files');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}),
+  get:async(k)=>{const d=await idb.open();return new Promise((res,rej)=>{const tx=d.transaction('files','readonly').objectStore('files').get(k);tx.onsuccess=()=>res(tx.result);tx.onerror=()=>rej(tx.error)})},
+  set:async(k,v)=>{const d=await idb.open();return new Promise((res,rej)=>{const tx=d.transaction('files','readwrite');tx.objectStore('files').put(v,k);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error)})}
+};
+
+/* ---- SQLite Schema & Sync Layer ---- */
+function initSchema(database){
+  database.run(`
+    CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);
+    CREATE TABLE IF NOT EXISTS categories (id TEXT PRIMARY KEY, name TEXT, emoji TEXT, kind TEXT, bud REAL);
+    CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, name TEXT, amt REAL, inc INTEGER, cat TEXT, date TEXT, rec INTEGER);
+    CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, emoji TEXT, name TEXT, target REAL, saved REAL, due TEXT);
+  `);
+}
+
+function dbToState(database){
+  initSchema(database);
+  const st=def();
+  const sRes=database.exec("SELECT k,v FROM settings");
+  if(sRes.length){for(const[k,v]of sRes[0].values){if(k=='salary'||k=='payday')st[k]=+v;else st[k]=v}}
+  const cRes=database.exec("SELECT id,name,emoji,kind,bud FROM categories");
+  if(cRes.length&&cRes[0].values.length)st.cats=cRes[0].values.map(([id,name,emoji,kind,bud])=>({id,name,emoji,kind,bud:+bud||0}));
+  const eRes=database.exec("SELECT id,name,amt,inc,cat,date,rec FROM entries");
+  st.ex=eRes.length?eRes[0].values.map(([id,name,amt,inc,cat,date,rec])=>({id,name,amt:+amt,inc:+inc,cat,date,rec:!!rec})):[];
+  const gRes=database.exec("SELECT id,emoji,name,target,saved,due FROM goals");
+  st.goals=gRes.length?gRes[0].values.map(([id,emoji,name,target,saved,due])=>({id,emoji,name,target:+target,saved:+saved,due})):[];
+  return st;
+}
+
+function stateToDb(database,state){
+  initSchema(database);
+  database.run("BEGIN TRANSACTION");
+  database.run("DELETE FROM settings; DELETE FROM categories; DELETE FROM entries; DELETE FROM goals;");
+  const insS=database.prepare("INSERT INTO settings(k,v) VALUES(?,?)");
+  for(const k of ['cur','salary','payday','start'])insS.run([k,String(state[k])]);
+  insS.free();
+  const insC=database.prepare("INSERT INTO categories(id,name,emoji,kind,bud) VALUES(?,?,?,?,?)");
+  for(const c of state.cats)insC.run([c.id,c.name,c.emoji,c.kind,c.bud||0]);
+  insC.free();
+  const insE=database.prepare("INSERT INTO entries(id,name,amt,inc,cat,date,rec) VALUES(?,?,?,?,?,?,?)");
+  for(const e of state.ex)insE.run([e.id,e.name,e.amt,e.inc?1:0,e.cat||null,e.date,e.rec?1:0]);
+  insE.free();
+  const insG=database.prepare("INSERT INTO goals(id,emoji,name,target,saved,due) VALUES(?,?,?,?,?,?)");
+  for(const g of state.goals)insG.run([g.id,g.emoji,g.name,g.target,g.saved||0,g.due]);
+  insG.free();
+  database.run("COMMIT");
+}
+
+const getGhCfg=()=>{try{return JSON.parse(localStorage.getItem(GH_KEY))||{owner:'',repo:'',branch:'main',path:'penny.sqlite',token:''}}catch(e){return{owner:'',repo:'',branch:'main',path:'penny.sqlite',token:''}}};
+const saveGhCfg=c=>localStorage.setItem(GH_KEY,JSON.stringify(c));
+
+const u8ToB64=u8=>{let b='';for(let i=0;i<u8.length;i+=0x8000)b+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000));return btoa(b)};
+const b64ToU8=b64=>{const bin=atob(b64.replace(/\s/g,''));const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return u8};
+
+async function pullFromGitHub(silent=false){
+  const cfg=getGhCfg();
+  const filePath=cfg.path||'penny.sqlite';
+  try{
+    let u8=null;
+    if(cfg.owner&&cfg.repo&&cfg.token){
+      const url=`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${filePath}?ref=${cfg.branch||'main'}&t=${Date.now()}`;
+      const r=await fetch(url,{headers:{Authorization:`Bearer ${cfg.token}`,Accept:'application/vnd.github+json'}});
+      if(r.ok){const j=await r.json();if(j.content)u8=b64ToU8(j.content)}
+    }else{
+      // Fallback: try fetching static penny.sqlite relative to GitHub Pages URL
+      const r=await fetch(`./${filePath}?t=${Date.now()}`);
+      if(r.ok){const buf=await r.arrayBuffer();if(buf.byteLength>16)u8=new Uint8Array(buf)}
+    }
+    if(u8){
+      db=new SQL.Database(u8);
+      S=dbToState(db);
+      await idb.set('penny.sqlite',u8);
+      dirty=false;
+      if(!silent)toast('Loaded latest penny.sqlite from GitHub');
+      return true;
+    }
+  }catch(e){console.warn('GitHub pull skipped:',e)}
+  return false;
+}
+
+async function pushToGitHub(){
+  const cfg=getGhCfg();
+  if(!cfg.owner||!cfg.repo||!cfg.token){
+    toast('Configure GitHub Sync in ⚙️ Settings first');
+    ss();
+    return;
+  }
+  toast('Saving penny.sqlite to GitHub…');
+  try{
+    stateToDb(db,S);
+    const u8=db.export();
+    await idb.set('penny.sqlite',u8);
+    const filePath=cfg.path||'penny.sqlite';
+    const branch=cfg.branch||'main';
+    const apiUrl=`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${filePath}`;
+    let sha=undefined;
+    const getRes=await fetch(`${apiUrl}?ref=${branch}&t=${Date.now()}`,{
+      headers:{Authorization:`Bearer ${cfg.token}`,Accept:'application/vnd.github+json'}
+    });
+    if(getRes.ok){const j=await getRes.json();sha=j.sha}
+    const putRes=await fetch(apiUrl,{
+      method:'PUT',
+      headers:{Authorization:`Bearer ${cfg.token}`,Accept:'application/vnd.github+json','Content-Type':'application/json'},
+      body:JSON.stringify({
+        message:`Update ${filePath} via Penny (${new Date().toISOString().slice(0,16)})`,
+        content:u8ToB64(u8),
+        branch,
+        ...(sha?{sha}:{})
+      })
+    });
+    if(!putRes.ok){
+      const err=await putRes.json().catch(()=>({}));
+      throw new Error(err.message||putRes.statusText);
+    }
+    dirty=false;
+    render();
+    toast('✓ Saved to GitHub SQLite!');
+  }catch(e){
+    toast('GitHub save failed: '+e.message);
+  }
+}
+
+const save=()=>{
+  dirty=true;
+  if(db){
+    stateToDb(db,S);
+    idb.set('penny.sqlite',db.export()).catch(()=>{});
+  }
+  try{localStorage.setItem(K,JSON.stringify(S))}catch(e){}
+};
+
 const n0=new Date(),ui={tab:'home',y:n0.getFullYear(),m:n0.getMonth(),sel:TD()};
 const fmt=n=>{try{return new Intl.NumberFormat(S.cur=='INR'?'en-IN':'en-US',{style:'currency',currency:S.cur,maximumFractionDigits:Math.abs(n)<100&&S.cur!='INR'?2:0}).format(n)}catch(e){return Math.round(n)}};
 const catOf=id=>S.cats.find(c=>c.id==id)||{emoji:'❔',name:'Other'};
@@ -136,7 +278,7 @@ return `<div class="card"><h3>Month-end forecast</h3><p>At your current pace you
 <div class="card"><h3>Spending by type</h3>${S.cats.filter(k=>st.by[k.id]||k.bud).map(k=>{const v=st.by[k.id]||0,r=k.bud?v/k.bud:v/mx;return B(k.emoji+' '+esc(k.name),fmt(v)+(k.bud?' of '+fmt(k.bud):''),r*100,k.bud&&r>1?'var(--bad)':k.bud&&r>.8?'var(--warn)':'')}).join('')||'<p class="mu">Add expenses to see where the money goes.</p>'}<small>Set a monthly budget for each type in Settings.</small></div>
 <div class="card"><h3>Ways to save more</h3>${tips(c).map(t=>`<p style="margin-bottom:10px">💡 ${t}</p>`).join('')}</div>`}
 const views={home,cal,ent,goals,ins};
-function render(){$('#app').innerHTML=`<div class="top"><div><h1>🪙 Penny</h1><small>${new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}</small></div><button class="ib" data-a="set" aria-label="Settings">⚙️</button></div>`+views[ui.tab]();
+function render(){$('#app').innerHTML=`<div class="top"><div><h1>🪙 Penny</h1><small>${new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}</small></div><div class="row"><button class="ib" data-a="sync" aria-label="Save SQLite to GitHub" title="Save SQLite to GitHub">☁️${dirty?'<i class="dot"></i>':''}</button><button class="ib" data-a="set" aria-label="Settings">⚙️</button></div></div>`+views[ui.tab]();
 $('#nav').innerHTML=[['home','🏠','Home'],['cal','📅','Calendar'],['ent','🧾','Entries'],['goals','🎯','Goals'],['ins','💡','Insights']].map(([k,i,l])=>`<button data-a="tab" data-v="${k}" class="${ui.tab==k?'on':''}"><b>${i}</b>${l}</button>`).join('')}
 
 /* ---- sheets ---- */
@@ -157,16 +299,25 @@ openS(`<h2>${id?'Edit goal':'New goal'}</h2><form data-f="g" data-id="${id||''}"
 <small>Price</small><input name="target" type="number" min="1" step="any" value="${g.target}" required><small>Already saved</small><input name="saved" type="number" min="0" step="any" value="${g.saved}"><small>Needed by</small><input name="due" type="date" value="${g.due}" required>
 <div class="row"><button class="btn p" style="flex:1">Save goal</button>${id?`<button type="button" class="btn d" data-a="dg" data-v="${id}">Delete</button>`:''}</div></form>`)}
 const sc=id=>openS(`<h2>Add savings to ${esc(S.goals.find(g=>g.id==id).name)}</h2><form data-f="sv" data-id="${id}"><input class="amt" name="amt" type="number" step="any" min="0" placeholder="0" required><button class="btn p" style="width:100%">Add savings</button></form>`);
-function ss(){openS(`<h2>Settings</h2><form data-f="set"><small>Monthly salary</small><input name="salary" type="number" min="0" step="any" value="${S.salary||''}" placeholder="e.g. 45000" required><small>Payday (day of month)</small><input name="payday" type="number" min="1" max="31" value="${S.payday}"><small>Currency</small><select name="cur">${['INR','USD','EUR','GBP','AED','SAR'].map(c=>`<option ${c==S.cur?'selected':''}>${c}</option>`).join('')}</select><button class="btn p" style="width:100%">Save settings</button></form>
+function ss(){const gh=getGhCfg();openS(`<h2>Settings</h2><form data-f="set"><small>Monthly salary</small><input name="salary" type="number" min="0" step="any" value="${S.salary||''}" placeholder="e.g. 45000" required><small>Payday (day of month)</small><input name="payday" type="number" min="1" max="31" value="${S.payday}"><small>Currency</small><select name="cur">${['INR','USD','EUR','GBP','AED','SAR'].map(c=>`<option ${c==S.cur?'selected':''}>${c}</option>`).join('')}</select><button class="btn p" style="width:100%">Save settings</button></form>
+<h3 style="margin-top:20px">GitHub SQLite Sync (Cross-Device)</h3><small>Connect your GitHub repository so tapping ☁️ updates <b>penny.sqlite</b> across all your devices.</small>
+<form data-f="gh" style="margin-top:8px"><div class="row"><input name="owner" placeholder="GitHub username" value="${esc(gh.owner)}"><input name="repo" placeholder="Repo name" value="${esc(gh.repo)}"></div>
+<div class="row"><input name="branch" placeholder="Branch (main)" value="${esc(gh.branch)}"><input name="path" placeholder="File (penny.sqlite)" value="${esc(gh.path)}"></div>
+<input name="token" type="password" placeholder="GitHub Personal Access Token (repo scope)" value="${esc(gh.token)}">
+<div class="row"><button class="btn p" style="flex:1">Save GitHub config</button><button type="button" class="btn" data-a="pull">Pull latest</button></div></form>
 <h3 style="margin-top:20px">Monthly bills and fixed expenses</h3><small>Rent, EMI, internet, subscriptions: anything you pay every month. Penny takes them off your income before working out your daily budget.</small><div id="bl" style="margin-top:6px">${bl()}</div>
 <div class="nc"><div class="row"><input id="bn" placeholder="Bill name, e.g. Rent"><input id="ba" inputmode="decimal" placeholder="Amount, or 800+400+250"></div><div class="row"><select id="bc">${S.cats.map(c=>`<option value="${c.id}">${c.emoji} ${esc(c.name)}</option>`).join('')}</select><input id="bd" type="number" min="1" max="31" placeholder="Pay day"><button type="button" class="btn p" data-a="addbill">Add bill</button></div><small id="bt" class="ok"></small></div>
 <h3 style="margin-top:20px">Expense types</h3><small>The limit beside each type only warns you when you go over it. It is not counted as spending, so put bills in the list above.</small><div id="cl">${cl()}</div>${ncat()}
-<h3 style="margin-top:20px">Backup</h3><textarea id="bk" rows="3" placeholder="Tap Backup to copy your data here, or paste a backup and tap Restore"></textarea><div class="row"><button class="btn" data-a="bk">Backup</button><button class="btn" data-a="rs">Restore</button><button class="btn d" data-a="reset">Erase all</button></div>`)}
+<h3 style="margin-top:20px">SQLite File & JSON Backup</h3><div class="row" style="margin-bottom:8px"><button type="button" class="btn" style="flex:1" data-a="expsql">Download penny.sqlite</button><label class="btn" style="flex:1;text-align:center;cursor:pointer">Load .sqlite<input type="file" id="impsql" accept=".sqlite,.db" hidden></label></div>
+<textarea id="bk" rows="3" placeholder="Tap Backup to copy JSON here, or paste a backup and tap Restore"></textarea><div class="row"><button class="btn" data-a="bk">Backup</button><button class="btn" data-a="rs">Restore</button><button class="btn d" data-a="reset">Erase all</button></div>`)}
 function addcat(){const n=$('#nn').value.trim();if(!n)return;const c={id:uid(),name:n,emoji:$('#ne').value.trim()||'🏷️',kind:$('#nk').value,bud:+$('#nb').value||0};S.cats.push(c);save();
 if($('#chips')){$('#chips').innerHTML=chips(c.id);$('#ncat').hidden=true}if($('#cl')){$('#cl').innerHTML=cl();['#nn','#ne','#nb'].forEach(s=>$(s).value='')}}
 
 /* ---- events ---- */
 const A={tab:v=>{ui.tab=v;render();scrollTo(0,0)},
+sync:()=>pushToGitHub(),
+pull:async()=>{const ok=await pullFromGitHub(false);if(ok){closeS();render()}else toast('Could not load penny.sqlite from GitHub')},
+expsql:()=>{if(!db)return;stateToDb(db,S);const blob=new Blob([db.export()],{type:'application/x-sqlite3'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='penny.sqlite';a.click()},
 mm:v=>{ui.m+=+v;if(ui.m<0){ui.m=11;ui.y--}if(ui.m>11){ui.m=0;ui.y++}const n=new Date();ui.sel=ui.y==n.getFullYear()&&ui.m==n.getMonth()?TD():iso(new Date(ui.y,ui.m,1));render()},
 day:v=>{ui.sel=v;render()},add:()=>sx(null,ui.tab=='cal'?ui.sel:TD()),edit:v=>sx(v),set:ss,close:closeS,ag:()=>sg(),eg:v=>sg(v),sv:v=>sc(v),
 nc:()=>{$('#ncat').hidden=!$('#ncat').hidden},addcat,
@@ -181,13 +332,44 @@ rs:()=>{const b=$('#bk');try{const d=JSON.parse(b.value);if(!d||!d.cats||!d.ex)t
 reset:(v,b)=>{if(b.dataset.s){S=def();fin()}else{b.dataset.s=1;b.textContent='Tap again to erase'}}};
 document.addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b||(b.dataset.a=='close'&&e.target!==b))return;const f=A[b.dataset.a];f&&f(b.dataset.v,b)});
 document.addEventListener('submit',e=>{e.preventDefault();const f=e.target,d=Object.fromEntries(new FormData(f)),t=f.dataset.f,id=f.dataset.id;
+if(t=='gh'){saveGhCfg({owner:d.owner.trim(),repo:d.repo.trim(),branch:d.branch.trim()||'main',path:d.path.trim()||'penny.sqlite',token:d.token.trim()});toast('GitHub config saved');pullFromGitHub(false).then(ok=>{if(ok){closeS();render()}});return}
 if(t=='ex'){const o={name:d.name.trim()||'Entry',amt:+d.amt,inc:+d.inc,cat:+d.inc?null:d.cat,date:d.date,rec:!!d.rec};id?Object.assign(S.ex.find(x=>x.id==id),o):S.ex.push({id:uid(),...o});if(d.date<S.start)S.start=d.date}
 if(t=='g'){const o={emoji:d.emoji||'🎯',name:d.name.trim(),target:+d.target,saved:+d.saved||0,due:d.due};id?Object.assign(S.goals.find(x=>x.id==id),o):S.goals.push({id:uid(),...o})}
 if(t=='sv')S.goals.find(x=>x.id==id).saved+=+d.amt;
 if(t=='set'){S.salary=+d.salary;S.payday=Math.min(31,+d.payday||1);S.cur=d.cur}
 fin()});
-document.addEventListener('change',e=>{const b=e.target.dataset.b;if(b){const v=calc(e.target.value),x=S.ex.find(x=>x.id==b);if(x&&v>0){x.amt=v;save();render()}$('#bl').innerHTML=bl()}const c=e.target.dataset.c;if(c){S.cats.find(x=>x.id==c).bud=+e.target.value||0;save();render()}});
+document.addEventListener('change',async e=>{
+  if(e.target.id=='impsql'&&e.target.files[0]){
+    const buf=await e.target.files[0].arrayBuffer();
+    db=new SQL.Database(new Uint8Array(buf));
+    S=dbToState(db);
+    fin();
+    toast('Loaded SQLite file');
+    return;
+  }
+  const b=e.target.dataset.b;if(b){const v=calc(e.target.value),x=S.ex.find(x=>x.id==b);if(x&&v>0){x.amt=v;save();render()}$('#bl').innerHTML=bl()}
+  const c=e.target.dataset.c;if(c){S.cats.find(x=>x.id==c).bud=+e.target.value||0;save();render()}
+});
 document.addEventListener('input',e=>{if(e.target.id=='ba'){const v=calc(e.target.value);$('#bt').textContent=v>0?'= '+fmt(v):'';return}const w=e.target.dataset.w;if(!w)return;const g=S.goals.find(x=>x.id==w),x=+e.target.value,r=Math.max(0,g.target-g.saved);
 $('#w'+w).textContent=x>0?(r?'ready '+new Date(Date.now()+Math.ceil(r/x)*864e5).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'2-digit'}):'done'):'–'});
-render();if(!S.salary)ss();
+
+/* ---- Boot SQLite Engine ---- */
+(async()=>{
+  SQL=await initSqlJs({locateFile:f=>`https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}`});
+  const pulled=await pullFromGitHub(true);
+  if(!pulled){
+    const cached=await idb.get('penny.sqlite').catch(()=>null);
+    if(cached){
+      db=new SQL.Database(new Uint8Array(cached));
+      S=dbToState(db);
+    }else{
+      try{const old=JSON.parse(localStorage.getItem(K));if(old&&old.cats)S=old}catch(e){}
+      db=new SQL.Database();
+      stateToDb(db,S);
+      await idb.set('penny.sqlite',db.export()).catch(()=>{});
+    }
+  }
+  render();
+  if(!S.salary)ss();
+})();
 </script></body></html>
